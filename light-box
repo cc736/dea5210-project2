@@ -1,120 +1,78 @@
-#include <SDHCI.h>
-#include <Audio.h>
-#define BAUDRATE (115200)
-AudioClass *theAudio;
-SDClass SD;
+#include "FastLED.h"
+#if FASTLED_VERSION < 3001000
+#error 
+#endif
+const int pinSound = A0;
+int sensorValue;
 
-int trigPin = 8; 
-int echoPin = 7;    
-int ledPin = 13;   
-long duration, cm;
-int value;
+// Fixed definitions cannot change on the fly.
+#define LED_DT 12                                             // Data pin to connect to the strip.
+#define LED_CK 11                                             // Clock pin for WS2801 or APA102.
+#define COLOR_ORDER GRB                                       // It's GRB for WS2812 and BGR for APA102.
+#define LED_TYPE WS2812                                       // Using APA102, WS2812, WS2801. Don't forget to change LEDS.addLeds.
+#define NUM_LEDS 144                                           // Number of LED's.
 
-File mp3file;
-bool ErrEnd = false;
-int volume = -160; // vol 120n to -1020
-int track =1; // currently selected mp3 track 1.mp3, 2.mp3, 3.mp3
-int err; // some sony variable, dont worry about it
-int track_max =2; // highest number of tracks in sd card eg 99.mp3 
+// Global variables can be changed on the fly.
+uint8_t max_bright = 255;                                      // Overall brightness definition. It can be changed on the fly.
 
-int switch_val = 0; // adc switches value
-bool mid_switch = 0; // play/pause
-bool tol_switch = 0;// prev song
-bool tor_switch = 0;// next song
+struct CRGB leds[NUM_LEDS];                                   // Initialize our LED array.
 
-//Sets up error code for if the track fails to load or stream data continously.
-static void audio_attention_cb(const ErrorAttentionParam *atprm)
-{
-   if (atprm->error_code >= AS_ATTENTION_CODE_WARNING)
-    {      ErrEnd = true;   }
-}
+uint8_t frequency = 50;                                       // controls the interval between strikes
+uint8_t flashes = 8;                                          //the upper limit of flashes per strike
+unsigned int dimmer = 1;
+
+uint8_t ledstart;                                             // Starting location of a flash
+uint8_t ledlen;                                               // Length of a flash
+
+
 
 void setup() {
-  //Serial Port begin
-  Serial.begin(BAUDRATE);
-  while (!Serial)
-   {
-     ; /* wait for serial port to connect. Needed for native USB port only */
-   }
-  //Define inputs and outputs
-  pinMode(trigPin, OUTPUT);
-  pinMode(ledPin, OUTPUT);      // declare LED as output
-  pinMode(echoPin, INPUT);
-  theAudio = AudioClass::getInstance();
-  theAudio->begin(audio_attention_cb);
-  theAudio->setRenderingClockMode(AS_CLKMODE_NORMAL);
-  theAudio->setPlayerMode(AS_SETPLAYER_OUTPUTDEVICE_SPHP, AS_SP_DRV_MODE_LINEOUT);
-  err_t err = theAudio->initPlayer(AudioClass::Player0, AS_CODECTYPE_MP3, "/mnt/sd0/BIN", AS_SAMPLINGRATE_AUTO, AS_CHANNEL_STEREO);
-  err = theAudio->writeFrames(AudioClass::Player0, mp3file);
-  theAudio->setVolume(volume);
-  theAudio->startPlayer(AudioClass::Player0);
-}
 
-void loop()
-{
-// run music //     
-    while(mid_switch==0)
-   {
-     getDistance();
-     Scan_Switches();
-     err = theAudio->writeFrames(AudioClass::Player0, mp3file);     
-      if (err == AUDIOLIB_ECODE_FILEEND)
-        Song_Change();
-        theAudio->stopPlayer(AudioClass::Player0);
-        mp3file.close();
-   }
-}
-//Method for getting distance through the Ultrasonic distance sensor module.
-void getDistance(void) {
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(5);
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
-  // Read the signal from the sensor: a HIGH pulse whose
-  // duration is the time (in microseconds) from the sending
-  // of the ping to the reception of its echo off of an object.
-  pinMode(echoPin, INPUT);
-  duration = pulseIn(echoPin, HIGH);
-  // Convert the time into a distance
-  cm = (duration/2) / 29.1;     // Divide by 29.1 or multiply by 0.0343
-  value = cm;
-  return;
-}
-void Scan_Switches (void)
-{
-  //Scans the value obtained through getDistance method to sort into which track depending on DB readings.
-  if(value <= 100){
-      if (value < 10){
-        tol_switch =1;
-        Serial.println("Hitting Under 10");
-      }
-      if (value >= 30){
-        tor_switch =1;
-        Serial.println("Hitting Over 30");
+  Serial.begin(115200);                                        // Initialize serial port for debugging.
+  delay(1000);                                                // Soft startup to ease the flow of electrons.
+
+  LEDS.addLeds<LED_TYPE, LED_DT, COLOR_ORDER>(leds, NUM_LEDS);  // Use this for WS2812
+//  LEDS.addLeds<LED_TYPE, LED_DT, LED_CK, COLOR_ORDER>(leds, NUM_LEDS);  // Use this for WS2801 or APA102
+
+  FastLED.setBrightness(max_bright);
+  set_max_power_in_volts_and_milliamps(5, 500);               // FastLED Power management set at 5V, 500mA.
+  
+} // setup()
+
+
+
+void loop() {
+  //Iterating through each LED in the LED strip to actively turn them on to the designated colors.
+    soundSensor();
+    if(sensorValue < 600){
+      if(sensorValue >= 440){
+        for(int led = 0; led < NUM_LEDS; led++){ 
+        leds[led] = CRGB::Red;
+        FastLED.show();
       }
     }
-}
-// Method for turning off current playing track, and turn on requested track.
-void Song_Change(void)
-{
-if (tol_switch==1)
-{
-  tol_switch =0;
-  theAudio->stopPlayer(AudioClass::Player0);
-  mp3file.close();
-  mp3file = SD.open("1.mp3");
-  err = theAudio->writeFrames(AudioClass::Player0, mp3file);
-  theAudio->startPlayer(AudioClass::Player0);
-}
-
-if (tor_switch==1)
-{
-  tor_switch =0;
-  theAudio->stopPlayer(AudioClass::Player0);
-  mp3file.close();
-  mp3file = SD.open("2.mp3");
-  err = theAudio->writeFrames(AudioClass::Player0, mp3file);
-  theAudio->startPlayer(AudioClass::Player0);
+    if(sensorValue <= 380){
+      FastLED.clear();
+      ledstart = random8(NUM_LEDS);                               // Determine starting location of flash
+      ledlen = random8(NUM_LEDS-ledstart);                        // Determine length of flash (not to go beyond NUM_LEDS-1)
+      for (int flashCounter = 0; flashCounter < random8(3,flashes); flashCounter++) {
+        if(flashCounter == 0) dimmer = 5;                         // the brightness of the leader is scaled down by a factor of 5
+        else dimmer = random8(1,3);                               // return strokes are brighter than the leader
+        fill_solid(leds+ledstart,ledlen,CHSV(255, 0, 255/dimmer));
+        FastLED.show();                       // Show a section of LED's
+        delay(random8(4,10));                                     // each flash only lasts 4-10 milliseconds
+        fill_solid(leds+ledstart,ledlen,CHSV(255,0,0));           // Clear the section of LED's
+        FastLED.show();
+        if (flashCounter == 0) delay (0);                       // longer delay until next flash after the leader
+        delay(5+random8(1));                                   // shorter delay between strokes  
+      } // for()
+      delay(random8(frequency)*20);  
+    }    
   }
+}
+void soundSensor(void){
+    sensorValue = analogRead(pinSound);
+    Serial.println(sensorValue);
+    delay(250);
+    return;
 }
